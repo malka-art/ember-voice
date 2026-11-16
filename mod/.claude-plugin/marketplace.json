@@ -1,0 +1,5 @@
+{
+  "name": "ember-voice-local",
+  "owner": { "name": "Ember Voice" },
+  "plugins": [{ "name": "ember-thread", "source": "./ember-thread" }]
+}

@@ -1,0 +1,24 @@
+{
+  "model": "claude-opus-5-5",
+  "models": [
+    { "id": "claude-opus-5-5", "label": "Opus 5.5" },
+    { "id": "claude-fable-5-2", "label": "Fable 5.2" }
+  ],
+  "mode": "thread",
+  "useApiKey": false,
+  "forkSession": true,
+  "sttEngine": "auto",
+  "whisperThreads": 8,
+  "sttModel": "onnx-community/whisper-base.en",
+  "sttDtype": null,
+  "sttDevice": null,
+  "silenceMs": 1500,
+  "voiceName": "",
+  "voiceRate": 1.31,
+  "ttsEngine": "neural",
+  "ttsVoice": "af_heart",
+  "ttsSpeed": 1.3,
+  "wakeWord": "ember",
+  "wakeFollowMs": 15000,
+  "spokenStyle": "Your replies in this session are read aloud by a voice widget. Keep them short and conversational, in plain sentences. Avoid markdown, lists, tables and code blocks unless asked; describe code changes instead of reciting them."
+}

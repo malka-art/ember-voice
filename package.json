@@ -1,0 +1,29 @@
+{
+  "name": "ember-voice",
+  "version": "1.0.0",
+  "description": "A floating voice widget that talks to a signed-in Claude Code session.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "node scripts/launch.mjs",
+    "new": "node scripts/launch.mjs --new",
+    "latest": "node scripts/launch.mjs --latest",
+    "mic-test": "node scripts/launch.mjs --mic-test",
+    "preview": "node scripts/launch.mjs --mock",
+    "stop": "node scripts/launch.mjs --quit",
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "setup": "node scripts/setup.mjs",
+    "install-command": "node scripts/install-command.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.322",
+    "@huggingface/transformers": "^4.3.2",
+    "phonemizer": "1.2.1"
+  },
+  "devDependencies": {
+    "electron": "^45.3.0"
+  }
+}

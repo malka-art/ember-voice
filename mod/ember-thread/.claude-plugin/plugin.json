@@ -1,0 +1,5 @@
+{
+  "name": "ember-thread",
+  "version": "1.4.1",
+  "description": "Lets the Ember Voice bar speak into this thread and read its replies aloud. Does nothing unless the bar names this session."
+}

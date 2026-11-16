@@ -1,0 +1,22 @@
+# Runs the whole test suite on every push to main and on every pull request.
+# Ember Voice is a Windows desktop app, so it runs on Windows. The test that
+# needs the real voice model skips itself here because the model is not on
+# the test machine. Ember is a local app, so there is nothing to deploy.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install
+        run: npm ci
+      - name: Run the suite
+        run: npm test

@@ -1,0 +1,11 @@
+# Installed packages (npm ci rebuilds them)
+node_modules/
+
+# Local scratch and run output
+temp/
+*.log
+*.wav
+
+# This PC's own settings (folders, the speech model), laid over config.json
+config.local.json
+
