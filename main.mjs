@@ -122,6 +122,11 @@ const threadMode = config.mode === 'thread' && !startArgs.mock;
 const neuralWanted = isNeuralEngine(config.ttsEngine) && !(startArgs.mock && !startArgs.micTest);
 
 let win = null;
+// Where the bar belongs: its left edge and bottom edge. Resizing places the
+// window from this, never from the window's own read-back position, which a
+// scaled screen (175%, say) rounds by a pixel each time, so the bar would
+// creep down a little on every resize. Only a drag changes it.
+let anchor = null;
 let bridge = null;
 // What the bar was asked to speak lately, to tell your voice from its own.
 const spokenLately = createSpokenMemory();
@@ -429,10 +434,9 @@ function savedPlace() {
   }
 }
 function rememberPlace() {
-  if (!BAR_ID || !win || win.isDestroyed()) return;
-  const b = win.getBounds();
+  if (!BAR_ID || !anchor) return;
   try {
-    writeFileSync(placeFile(), JSON.stringify({ x: b.x, bottom: b.y + b.height }));
+    writeFileSync(placeFile(), JSON.stringify(anchor));
   } catch {
     // Not remembered this time; it opens in a free spot instead.
   }
@@ -457,6 +461,7 @@ function createWindow() {
     y: Math.max(area.y, bottomY - barSlot * STACK_STEP),
   };
   const place = savedPlace() ?? free;
+  anchor = { x: place.x, bottom: place.y + BASE_HEIGHT };
   win = new BrowserWindow({
     width: WIDTH,
     height: BASE_HEIGHT,
@@ -483,8 +488,13 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'floating');
   win.loadFile(path.join(ROOT, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.showInactive());
-  // Dragged somewhere: that is where this thread's bar opens from now on.
-  win.on('moved', rememberPlace);
+  // Dragged somewhere: that is where this thread's bar belongs and opens from
+  // now on. ('moved' comes from a drag only, not from the resizes below.)
+  win.on('moved', () => {
+    const b = win.getBounds();
+    anchor = { x: b.x, bottom: b.y + b.height };
+    rememberPlace();
+  });
   win.on('closed', () => {
     win = null;
   });
@@ -536,9 +546,8 @@ function wireIpc() {
   ipcMain.on('ember:resize', (_event, wanted) => {
     if (!win) return;
     const height = Math.max(BASE_HEIGHT, Math.min(MAX_HEIGHT, Math.round(Number(wanted) || BASE_HEIGHT)));
-    const bounds = win.getBounds();
-    if (bounds.height === height) return;
-    win.setBounds({ x: bounds.x, y: bounds.y + bounds.height - height, width: WIDTH, height });
+    if (win.getBounds().height === height) return;
+    win.setBounds({ x: anchor.x, y: anchor.bottom - height, width: WIDTH, height });
   });
 
   ipcMain.on('ember:log', (_event, line) => {
