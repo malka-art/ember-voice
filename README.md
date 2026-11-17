@@ -2,6 +2,8 @@
 
 From the makers of [illi](https://illi.world), mouse-gesture video control for Chrome.
 
+Like voice mode in ChatGPT, for your Claude Code thread.
+
 A small floating voice bar for Claude Code on Windows. Type `/ember` in a
 Claude Code thread and a bar opens on your desktop. Say "Ember" and talk: your
 words go into that thread as your own message, and the reply is read aloud.
