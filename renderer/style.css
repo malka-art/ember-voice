@@ -279,6 +279,13 @@ body.backdrop {
   outline-offset: 2px;
 }
 
+/* No focus ring on the bar's buttons while the mouse is over the bar: the
+   keyboard ring is for keyboard use, not a pointer resting on Ember. */
+.bar:hover .icon-button:focus-visible,
+.bar:hover .orb:focus-visible {
+  outline: none;
+}
+
 .icon-button svg {
   width: 20px;
   height: 20px;
