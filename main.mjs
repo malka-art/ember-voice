@@ -542,12 +542,18 @@ function wireIpc() {
     return current;
   });
 
-  // The window grows upward so the bar itself stays put.
+  // The window grows upward so the bar itself stays put. While it shows more
+  // than the bar (what you said, a reply, a card), it comes to the front: with
+  // bars stacked, those words go over the bar above instead of behind it. Bars
+  // all float at one level, and Windows keeps the newer one in front, so
+  // growing alone would leave them hidden. moveTop neither moves the window
+  // nor takes the keyboard.
   ipcMain.on('ember:resize', (_event, wanted) => {
     if (!win) return;
     const height = Math.max(BASE_HEIGHT, Math.min(MAX_HEIGHT, Math.round(Number(wanted) || BASE_HEIGHT)));
     if (win.getBounds().height === height) return;
     win.setBounds({ x: anchor.x, y: anchor.bottom - height, width: WIDTH, height });
+    if (height > BASE_HEIGHT) win.moveTop();
   });
 
   ipcMain.on('ember:log', (_event, line) => {
