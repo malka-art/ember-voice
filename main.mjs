@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { bringToFront } from './lib/bring-to-front.mjs';
 import { ClaudeBridge } from './lib/claude-bridge.mjs';
 import { loadConfig } from './lib/config.mjs';
 import { createSpokenMemory } from './lib/echo.mjs';
@@ -220,7 +221,8 @@ if (!app.requestSingleInstanceLock() || startArgs.quit) {
       return;
     }
     args.cwd ??= workingDirectory;
-    win?.showInactive();
+    // Also when it is already open: it may have slipped under other windows.
+    bringToFront(win);
     if (args.session || args.fresh || args.latest) attach(args);
   });
   app.whenReady().then(boot);
