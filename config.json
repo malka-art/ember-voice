@@ -12,6 +12,7 @@
   "sttModel": "onnx-community/whisper-base.en",
   "sttDtype": null,
   "sttDevice": null,
+  "speechWords": [],
   "silenceMs": 1500,
   "voiceName": "",
   "voiceRate": 1.31,

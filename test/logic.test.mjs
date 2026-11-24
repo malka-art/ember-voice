@@ -23,8 +23,9 @@ test('vad: speech between silences becomes one utterance with pre-roll', () => {
   const after = feed(vad, 0.001, 1000);
   assert.equal(after.length, 1);
   assert.equal(after[0].type, 'end');
+  // Pre-roll, the 1.5 s of speech, and 0.3 s of the closing quiet (not all 0.8 s).
   const seconds = after[0].audio.length / 16000;
-  assert.ok(seconds > 2.3 && seconds < 2.9, `utterance was ${seconds}s`);
+  assert.ok(seconds > 1.9 && seconds < 2.4, `utterance was ${seconds}s`);
 });
 
 test('vad: a short click is discarded, steady hum is not speech', () => {
