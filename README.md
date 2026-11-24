@@ -150,6 +150,7 @@ For example, to use a speech engine or model you already have elsewhere:
 | `sttEngine` | `auto` uses the fast engine when it is found, `built-in` always uses the slower one |
 | `whisperDir` | The folder holding `whisper-server.exe`. Empty means the one setup made, `%APPDATA%\ember-voice\whisper` |
 | `whisperModel` | A model file name (looked for in `%APPDATA%\ember-voice\speech-models`) or a full path |
+| `speechWords` | Words the speech model should expect, for example `["Juniper", "Kubernetes"]`: product names, people, unusual spellings. Best kept in `config.local.json` |
 | `silenceMs` | How long a pause ends what you are saying |
 | `ttsEngine` | `neural`: the natural voice, with the Windows voice taking over if it cannot load. `windows`: the Windows voice only |
 | `ttsVoice`, `ttsSpeed` | The natural voice and its pace (the gear panel overrides both) |
@@ -162,7 +163,8 @@ Paths may use `%NAME%` for environment variables, for example
 
 ## If something is wrong
 
-The log is `%APPDATA%\ember-voice\ember.log`. It says which speech engine and
+The log is `%APPDATA%\ember-voice\ember.log` (the one before it is kept as
+`ember.log.1`). It says which speech engine and
 voice loaded, or why they did not. Set `EMBER_DEBUG=1` before starting to also
 log what was heard.
 

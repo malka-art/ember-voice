@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('ember', {
   setSettings: (patch) => ipcRenderer.invoke('ember:set-settings', patch),
   tts: (text) => ipcRenderer.invoke('ember:tts', text),
   ttsStop: () => ipcRenderer.send('ember:tts-stop'),
+  taskbarIcon: (name) => ipcRenderer.send('ember:taskbar-icon', String(name)),
   quit: () => ipcRenderer.send('ember:quit'),
 });

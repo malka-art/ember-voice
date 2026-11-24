@@ -2,6 +2,9 @@ import { Listener } from './audio.js';
 import { Orb } from './orb.js';
 import { NeuralSpeaker } from '../lib/neural-speaker.mjs';
 import { cleanForSpeech } from '../lib/speech-text.mjs';
+import { shouldListen } from '../lib/listen-policy.mjs';
+import { heldReplyAfterSentence } from '../lib/held-reply.mjs';
+import { taskbarIconFor } from '../lib/taskbar-icon.mjs';
 import { Speaker } from './tts.js';
 
 const $ = (id) => document.getElementById(id);
@@ -74,6 +77,9 @@ let speaker = null;
 let windowsVoice = null;
 let listener = null;
 let micLevel = 0; // 0 to 1, from the microphone
+let shownIcon = 'idle'; // the taskbar icon now showing
+let partialsStopped = false; // this sentence turned out not to be for the bar
+let transcribingCount = 0; // sentences sent to be turned into text, not back yet
 let settings = null; // the settings panel's current choices
 const demo = { on: false, speaking: false, level: 0, outLevel: 0 }; // screenshot runs only
 
@@ -124,17 +130,16 @@ function render() {
   el.session.textContent = view.title;
   el.session.title = view.title;
   orb.set(state === 'signedout' ? 'error' : state);
+  // The taskbar icon follows: yellow glow while you talk, pink while it
+  // speaks, none otherwise. Sent only when it changes.
+  const icon = taskbarIconFor(state);
+  if (icon !== shownIcon) {
+    shownIcon = icon;
+    api.taskbarIcon(icon);
+  }
 
-  // Thread mode listens all the time: while Claude works, so you can add to
-  // or correct the request mid-turn, and while the widget speaks, so you can
-  // cut it off (its own voice coming back is caught in the main process).
-  // Other modes stay half-duplex: only your turn.
-  const myTurn =
-    view.connected &&
-    view.micOn &&
-    (view.midTurn || (!view.turnActive && !speaker?.speaking)) &&
-    !view.transcribing &&
-    !view.error;
+  // Also while the last sentence is being turned into text (lib/listen-policy.mjs).
+  const myTurn = shouldListen({ ...view, speaking: Boolean(speaker?.speaking) });
   listener?.setOpen(myTurn);
 
   const interruptible = state === 'speaking' || state === 'thinking';
@@ -313,7 +318,6 @@ function handle(event) {
       view.setup = '';
       break;
     case 'heard':
-      view.transcribing = false;
       // You were taken as meaning it (your name for it, or inside the window):
       // whatever the widget was still saying gives way.
       heldReply = null;
@@ -327,12 +331,12 @@ function handle(event) {
       break;
     case 'progress':
       // Claude wrote something while still working: say it now.
-      if (view.hearing) heldReply = heldReply ? `${heldReply} ${event.text}` : event.text;
+      // Also while your last words are still being turned into text.
+      if (view.hearing || view.transcribing) heldReply = heldReply ? `${heldReply} ${event.text}` : event.text;
       // Read as words only: bold marks, bullets and the like are dropped.
       else speaker.say(cleanForSpeech(event.text));
       break;
     case 'heard-nothing':
-      view.transcribing = false;
       // Words shown while you talked turned out not to be for the bar.
       if (el.heard.classList.contains('live')) hideHeard();
       break;
@@ -341,7 +345,6 @@ function handle(event) {
       // (it stays asleep until its own name), and shows none of your words.
       view.awake = false;
       sentenceAwake = false;
-      if (!view.hearing) view.transcribing = false;
       if (el.heard.classList.contains('live')) hideHeard();
       break;
     case 'partial':
@@ -359,6 +362,8 @@ function handle(event) {
     case 'wake':
       if (demo.on) return;
       view.awake = event.awake;
+      // Awake now: the words so far are worth showing again.
+      if (event.awake) partialsStopped = false;
       break;
     case 'thinking':
       view.activity = 'Thinking';
@@ -390,7 +395,7 @@ function handle(event) {
         // reply waits until you stop.
         if (event.spoken) {
           // Nothing more to say.
-        } else if (view.hearing) heldReply = event.text;
+        } else if (view.hearing || view.transcribing) heldReply = event.text;
         else speaker.feed(event.text);
       }
       if (heldReply === null) speaker.finish();
@@ -521,6 +526,7 @@ async function startListening(settings) {
     },
     onStart: () => {
       view.hearing = true;
+      partialsStopped = false;
       // You cut in while the widget was talking. Awake, it stops at once;
       // asleep, only once you are heard saying its name ('heard').
       startedOverSpeech = Boolean(speaker?.speaking);
@@ -529,7 +535,11 @@ async function startListening(settings) {
       render();
     },
     onPartial: (audio) => {
-      if (audio) api.partial(audio, startedOverSpeech);
+      if (!audio || partialsStopped) return;
+      api.partial(audio, startedOverSpeech).then((answer) => {
+        // Not for this bar (no name at the front): no more looks this sentence.
+        if (answer === 'stop' && !view.awake) partialsStopped = true;
+      });
     },
     onDiscard: () => {
       view.hearing = false;
@@ -540,11 +550,21 @@ async function startListening(settings) {
     },
     onEnd: (audio) => {
       view.hearing = false;
+      // More than one sentence can be on its way to text now that the mic
+      // stays open meanwhile: the orb shows "transcribing" until all are back.
+      transcribingCount += 1;
       view.transcribing = true;
       render();
-      api.utterance(audio, startedOverSpeech);
+      // A reply held back while you talked waits until your words are text
+      // (lib/held-reply.mjs): 'heard' drops it, otherwise it is said now.
+      api.utterance(audio, startedOverSpeech).finally(() => {
+        transcribingCount = Math.max(0, transcribingCount - 1);
+        view.transcribing = transcribingCount > 0;
+        const next = heldReplyAfterSentence({ sentToThread: heldReply === null, stillTalking: view.hearing });
+        if (next === 'speak') releaseHeldReply();
+        render();
+      });
       startedOverSpeech = false;
-      releaseHeldReply();
     },
     onLost: () => {
       view.micWorks = false;

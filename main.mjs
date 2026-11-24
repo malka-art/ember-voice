@@ -1,21 +1,26 @@
-import { app, BrowserWindow, ipcMain, Menu, powerMonitor, screen, session as electronSession } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, screen, session as electronSession } from 'electron';
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { bringToFront } from './lib/bring-to-front.mjs';
+import { createTopKeeper, taskbarTitle, wireTaskbarReturn } from './lib/keep-on-top.mjs';
+import { TASKBAR_ICONS } from './lib/taskbar-icon.mjs';
 import { ClaudeBridge } from './lib/claude-bridge.mjs';
 import { loadConfig } from './lib/config.mjs';
 import { createSpokenMemory } from './lib/echo.mjs';
+import { createSerialQueue } from './lib/serial.mjs';
+import { createLogFile } from './lib/log-file.mjs';
+import { buildSpeechHint } from './lib/speech-hint.mjs';
 import { MockBridge } from './lib/mock-bridge.mjs';
 import { findSessionFile, parseArgs, recentSessions, resolveTarget, sessionTitle } from './lib/sessions.mjs';
 import { isNeuralEngine, loadNeuralVoice } from './lib/neural-voice.mjs';
 import { createTranscriber, WhisperServer } from './lib/stt.mjs';
 import { ThreadBridge } from './lib/thread-bridge.mjs';
 import { effectiveSettings, FOLLOW_CHOICES, readSettings, SPEED, updateSettings, VOICE_CHOICES } from './lib/settings.mjs';
-import { createWakeGate, nameFromTitle } from './lib/wake.mjs';
+import { createWakeGate, isFillerOnly, nameFromTitle, stopLooking } from './lib/wake.mjs';
 import { createWakeWatch } from './lib/wake-state.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -100,16 +105,15 @@ function buildWakeGate() {
 }
 // No thread is attached yet at start; its name joins once one is.
 let wakeGate = createWakeGate({ word: current.wakeWordOn ? current.wakeWord : '', followMs: current.wakeFollowMs });
-// Words the speech model should expect: every name a bar answers to, said
-// the way you say them, so "Juniper, ..." is heard as a name.
+// Words the speech model should expect: every name a bar answers to, then
+// the `speechWords` setting (lib/speech-hint.mjs).
 function speechHint() {
-  const names = new Set();
-  if (current.wakeWordOn && current.wakeWord) names.add(current.wakeWord);
+  const names = [];
+  if (current.wakeWordOn && current.wakeWord) names.push(current.wakeWord);
   const own = threadName();
-  if (own) names.add(own);
-  for (const bar of otherBars()) if (bar.name) names.add(bar.name);
-  const words = [...names].map((name) => name.replace(/\b\w/g, (c) => c.toUpperCase()));
-  return words.length ? `${words.join(', ')}.` : '';
+  if (own) names.push(own);
+  for (const bar of otherBars()) if (bar.name) names.push(bar.name);
+  return buildSpeechHint(names, config.speechWords);
 }
 
 // Brings the names up to date before each sentence is judged.
@@ -146,26 +150,15 @@ const debug = Boolean(process.env.EMBER_DEBUG);
 
 // A short running log for troubleshooting, kept in the app's data folder
 // (%APPDATA%\ember-voice\ember.log on Windows). What was said is only written
-// when EMBER_DEBUG is set.
+// when EMBER_DEBUG is set. The one before it is kept as ember.log.1.
 let logFile = null;
 function log(line) {
   if (!line) return;
   try {
-    if (!logFile) {
-      const dir = process.env.EMBER_LOG_DIR || SHARED_DIR;
-      mkdirSync(dir, { recursive: true });
-      logFile = path.join(dir, 'ember.log');
-      let size = 0;
-      try {
-        size = statSync(logFile).size;
-      } catch {
-        // First run: no log yet.
-      }
-      if (size > 512 * 1024) writeFileSync(logFile, '');
-    }
+    logFile ??= createLogFile(process.env.EMBER_LOG_DIR || SHARED_DIR);
     // Several bars share one log: each line names its bar's thread.
     const bar = BAR_ID ? `[${BAR_ID.slice(0, 6)}] ` : '';
-    appendFileSync(logFile, `${new Date().toISOString()} ${bar}${line}\n`);
+    logFile.write(`${new Date().toISOString()} ${bar}${line}\n`);
   } catch {
     // Logging must never break the widget.
   }
@@ -176,6 +169,11 @@ function describe(event) {
     case 'delta':
     case 'stt-progress':
     case 'wake':
+    // About once a second while you talk: a third of the log was this line,
+    // which pushed the log past its size limit within days.
+    case 'partial':
+    // The reason is logged where it is decided.
+    case 'heard-nothing':
       return null;
     case 'error':
       return `error: ${event.message}`;
@@ -204,6 +202,7 @@ function describe(event) {
 
 function send(event) {
   log(describe(event));
+  if ((event.type === 'attached' || event.type === 'title') && win && !win.isDestroyed()) win.setTitle(taskbarTitle(event.title));
   if (win && rendererReady && !win.isDestroyed()) win.webContents.send('ember:event', event);
   else backlog.push(event);
 }
@@ -252,6 +251,14 @@ async function boot() {
   // the window opens it afresh.
   powerMonitor.on('resume', () => send({ type: 'pc-awake', why: 'woke from sleep' }));
   powerMonitor.on('unlock-screen', () => send({ type: 'pc-awake', why: 'was unlocked' }));
+  // The bar comes back on top by itself after these (lib/keep-on-top.mjs);
+  // any other time, its taskbar button brings it back.
+  const onTop = createTopKeeper({ getWin: () => win, onLog: log });
+  powerMonitor.on('resume', () => onTop.poke('the PC woke from sleep'));
+  powerMonitor.on('unlock-screen', () => onTop.poke('the PC was unlocked'));
+  for (const change of ['display-added', 'display-removed', 'display-metrics-changed']) {
+    screen.on(change, () => onTop.poke(`a screen changed (${change})`));
+  }
 
   const kind = startArgs.micTest ? 'mic test' : startArgs.mock ? 'preview' : threadMode ? 'live, thread mode' : 'live';
   log(`started: ${kind}, Electron ${process.versions.electron}`);
@@ -444,6 +451,13 @@ function rememberPlace() {
   }
 }
 
+// The taskbar icons (scripts/make-icon.mjs), each loaded once.
+const taskbarIcons = new Map();
+function taskbarIcon(name) {
+  if (!taskbarIcons.has(name)) taskbarIcons.set(name, nativeImage.createFromPath(path.join(ROOT, 'assets', `ember-${name}.ico`)));
+  return taskbarIcons.get(name);
+}
+
 function createWindow() {
   const area = screen.getPrimaryDisplay().workArea;
   // A new bar opens in the first free spot of a stack rising from the bottom
@@ -474,7 +488,12 @@ function createWindow() {
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: true,
+    // A taskbar button, named after its thread: one click brings the bar
+    // back when it has slipped behind other windows.
+    skipTaskbar: false,
+    title: taskbarTitle(''),
+    // The bar's own orb with a soft glow (scripts/make-icon.mjs makes it).
+    icon: taskbarIcon('idle'),
     alwaysOnTop: true,
     hasShadow: false,
     show: false,
@@ -497,6 +516,9 @@ function createWindow() {
     anchor = { x: b.x, bottom: b.y + b.height };
     rememberPlace();
   });
+  wireTaskbarReturn(win, { onLog: log });
+  // The page's own <title> would rename the button; the thread names it.
+  win.on('page-title-updated', (event) => event.preventDefault());
   win.on('closed', () => {
     win = null;
   });
@@ -588,7 +610,11 @@ function wireIpc() {
         send({ type: 'for-another' });
         return;
       }
-      if (!seen.awake) return;
+      // Asleep and a few words in without its name at the front: the name
+      // can no longer come first, so the window stops asking for more looks
+      // at this sentence. Each look is a full run of the shared speech server,
+      // which the finished sentence (and every other bar) then waits behind.
+      if (!seen.awake) return stopLooking(seen, text) ? 'stop' : undefined;
       if (seen.called) {
         // Your name for it, mid-sentence: awake from this moment.
         wakeGate.touch();
@@ -604,7 +630,15 @@ function wireIpc() {
 
   // `overSpeech`: you began while the bar was talking, so it may be the bar's
   // own voice coming back.
-  ipcMain.handle('ember:utterance', async (_event, buffer, overSpeech = false) => {
+  // One sentence at a time, in the order said (lib/serial.mjs).
+  const inOrder = createSerialQueue();
+  ipcMain.handle('ember:utterance', (_event, buffer, overSpeech = false) => {
+    // When it arrived, so waiting behind an earlier sentence does not count
+    // against the no-name window.
+    const arrived = Date.now();
+    return inOrder(() => hearUtterance(buffer, overSpeech, arrived));
+  });
+  async function hearUtterance(buffer, overSpeech, arrived) {
     if (fakeSpeech) {
       const text = 'Tell me what this widget does.';
       send({ type: 'heard', text });
@@ -617,6 +651,7 @@ function wireIpc() {
       const text = await transcriber.transcribe(samples, { hint: speechHint() });
       log(`transcribed ${(samples.length / 16000).toFixed(1)} s of audio in ${Date.now() - began} ms`);
       if (!text) {
+        log('heard no words (silence, noise, or only sound labels)');
         send({ type: 'heard-nothing' });
         return;
       }
@@ -628,7 +663,10 @@ function wireIpc() {
       // Judged by when you STARTED speaking: a long sentence begun inside the
       // no-name window still counts, however long it took to say.
       refreshWakeNames();
-      const wanted = wakeGate.check(text, began - Math.round((samples.length / 16000) * 1000));
+      // The sentence arrives a full pause after you stopped, but only the
+      // start of that pause is in the audio (lib/vad.mjs keeps 0.3 s of it).
+      const pauseLeftOut = Math.max(0, (Number(config.silenceMs) || 0) - 300);
+      const wanted = wakeGate.check(text, arrived - pauseLeftOut - Math.round((samples.length / 16000) * 1000));
       if (wanted.ignored !== true) wakeGate.touch();
       wakeWatch.update();
       if (wanted.text === undefined) {
@@ -636,12 +674,17 @@ function wireIpc() {
         send({ type: wanted.other ? 'for-another' : 'heard-nothing' });
         return;
       }
+      if (isFillerOnly(wanted.text)) {
+        log(`ignored ${text.length} characters: only "um", "but" and the like`);
+        send({ type: 'heard-nothing' });
+        return;
+      }
       send({ type: 'heard', text: wanted.text });
       bridge.send(wanted.text);
     } catch (error) {
       send({ type: 'error', message: `Could not make out the audio: ${error.message}` });
     }
-  });
+  }
 
   ipcMain.handle('ember:say', (_event, text) => {
     const clean = String(text ?? '').trim();
@@ -676,6 +719,10 @@ function wireIpc() {
     const image = await win.webContents.capturePage(rect || undefined);
     const { writeFileSync } = await import('node:fs');
     writeFileSync(path.join(process.env.EMBER_SHOT_DIR, path.basename(file)), image.toPNG());
+  });
+  // The window says when the bar starts or stops hearing or speaking.
+  ipcMain.on('ember:taskbar-icon', (_event, name) => {
+    if (win && !win.isDestroyed() && TASKBAR_ICONS.includes(name)) win.setIcon(taskbarIcon(name));
   });
   ipcMain.on('ember:quit', () => app.quit());
 }

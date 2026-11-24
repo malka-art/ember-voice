@@ -108,7 +108,15 @@ export class Listener {
       this.nextPartialMs = FIRST_PARTIAL_MS;
       this.handlers.onStart?.();
     }
-    else if (event.type === 'end') this.handlers.onEnd?.(event.audio);
+    else if (event.type === 'end') {
+      this.handlers.onEnd?.(event.audio);
+      // Cut at the length limit while still talking: the rest is a new
+      // sentence that has already begun.
+      if (event.cut) {
+        this.nextPartialMs = FIRST_PARTIAL_MS;
+        this.handlers.onStart?.();
+      }
+    }
     else if (event.type === 'discard') this.handlers.onDiscard?.();
   }
 }
